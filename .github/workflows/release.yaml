@@ -1,6 +1,8 @@
 name: Release
 
 on:
+  workflow_dispatch:
+  
   push:
     tags:
       - '*'
@@ -25,21 +27,17 @@ jobs:
 
       - name: Build arm64 (Apple Silicon Macs)
         run: |
-          GOOS=darwin GOARCH=arm64 go build -o mac2mqtt_${{ github.ref_name }}_arm64 .
+          GOOS=darwin GOARCH=arm64 go build -o mac2mqtt_bin_arm64 .
 
       - name: Build x86_64 (Intel-based Macs)
         run: |
-          GOOS=darwin GOARCH=amd64 go build -o mac2mqtt_${{ github.ref_name }}_x86_64 .
+          GOOS=darwin GOARCH=amd64 go build -o mac2mqtt_bin_x86_64 .
 
 
-      - name: Create release_description.txt
-        run: |
-          ./.github/workflows/create_github_release_description.pl ${{ github.ref_name }}
-
-      - name: Release
-        uses: softprops/action-gh-release@v2
+      - name: Upload Artifact (optional)
+        uses: actions/upload-artifact@v4
         with:
-          body_path: release_description.txt
-          files: |
-            mac2mqtt_${{ github.ref_name }}_x86_64
-            mac2mqtt_${{ github.ref_name }}_arm64
+          name: mac2mqtt_bin
+          path: mac2mqtt_bin_*
+            
+          
