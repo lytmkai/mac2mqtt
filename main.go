@@ -235,6 +235,21 @@ var connectHandler mqtt.OnConnectHandler = func(client mqtt.Client) {
 
 var connectLostHandler mqtt.ConnectionLostHandler = func(client mqtt.Client, err error) {
 	log.Printf("Disconnected from MQTT: %v", err)
+	
+	// Attempt to reconnect
+	go func() {
+		for {
+			log.Println("Attempting to reconnect to MQTT...")
+			token := client.Connect()
+			if token.WaitTimeout(5*time.Second) && token.Error() == nil {
+				log.Println("Reconnected to MQTT successfully")
+				break
+			} else {
+				log.Printf("Failed to reconnect: %v. Retrying in 5 seconds...", token.Error())
+				time.Sleep(5 * time.Second)
+			}
+		}
+	}()
 }
 
 var client mqtt.Client
@@ -247,9 +262,17 @@ func getMQTTClient(ip, port, user, password string) mqtt.Client {
 	opts.SetPassword(password)
 	opts.OnConnect = connectHandler
 	opts.OnConnectionLost = connectLostHandler
+	opts.SetAutoReconnect(true)           // Enable auto-reconnect
+	opts.SetConnectRetry(true)            // Enable connect retry
+	opts.SetConnectRetryInterval(5 * time.Second) // Set retry interval
 
 	client = mqtt.NewClient(opts)
-	if token := client.Connect(); token.Wait() && token.Error() != nil {
+	token := client.Connect();
+	if !token.WaitTimeout(5*time.Second) {
+		log.Printf("MQTT connection timed out")
+		panic("MQTT connection timed out")
+	} else if token.Error() != nil {
+		log.Printf("MQTT connection error: %v", token.Error())
 		panic(token.Error())
 	}
 
