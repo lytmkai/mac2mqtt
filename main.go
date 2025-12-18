@@ -452,7 +452,6 @@ func publishHADiscoveryConfig(client mqtt.Client) {
 	// Sleep command Button with state feedback
 	sleepButtonConfig := ButtonConfig{
 		Name:         hostname + " Sleep",
-		StateTopic:   topicPrefix + "/state/sleep",
 		CommandTopic: topicPrefix + "/command/sleep",
   		PayloadPress: "sleep",
 		UniqueID:     hostname + "_sleep",
