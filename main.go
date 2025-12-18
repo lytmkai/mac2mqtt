@@ -298,7 +298,7 @@ func listen(client mqtt.Client, topic string) {
 
 		if topic == topicPrefix+"/command/volume" {
 
-			i, err := strconv.Atoi(string(msg.Payload()))
+			i, err := strconv.Atoi(commd)
 			if err == nil && i >= 0 && i <= 100 {
 
 				setVolume(i)
@@ -312,11 +312,9 @@ func listen(client mqtt.Client, topic string) {
 				log.Println("Incorrect volume value")
 			}
 
-		}
+		} else if topic == topicPrefix+"/command/mute" {
 
-		else if topic == topicPrefix+"/command/mute" {
-
-			b, err := strconv.ParseBool(string(msg.Payload()))
+			b, err := strconv.ParseBool(commd)
 			if err == nil {
 				setMute(b)
 
@@ -329,27 +327,21 @@ func listen(client mqtt.Client, topic string) {
 				log.Println("Incorrect mute value")
 			}
 
-		}
-
-		else if topic == topicPrefix+"/command/sleep" {
+		} else if topic == topicPrefix+"/command/sleep" {
 
 			if string(msg.Payload()) == "sleep" {
 				
 				commandSleep()
 			}
 
-		}
-
-		else if topic == topicPrefix+"/command/displaysleep" {
+		} else if topic == topicPrefix+"/command/displaysleep" {
 
 			if string(msg.Payload()) == "displaysleep" {
 				
 				commandDisplaySleep()
 			}
 
-		}
-
-		else if topic == topicPrefix+"/command/shutdown" {
+		} else if topic == topicPrefix+"/command/shutdown" {
 
 			if string(msg.Payload()) == "shutdown" {
 				
