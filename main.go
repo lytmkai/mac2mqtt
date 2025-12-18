@@ -424,7 +424,7 @@ func publishHADiscoveryConfig(client mqtt.Client) {
 		Name:        hostname + " Power Adapter",
 		StateTopic:  topicPrefix + "/state/power_adapter",
   		PayloadOn:   "true",
-  		PayloadOff:  "false"
+  		PayloadOff:  "false",
 		UniqueID:    hostname + "_power_adapter",
 		DeviceClass: "plug",
 		Device:      device,
