@@ -345,7 +345,7 @@ func listen(client mqtt.Client, topic string) {
 				}
 				
 				// Give a moment for the message to be sent
-				time.Sleep(1 * time.Second)/
+				time.Sleep(1 * time.Second)
 				
 				commandShutdown()
 			}
