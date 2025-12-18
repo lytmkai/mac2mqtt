@@ -230,7 +230,7 @@ var messagePubHandler mqtt.MessageHandler = func(client mqtt.Client, msg mqtt.Me
 var connectHandler mqtt.OnConnectHandler = func(client mqtt.Client) {
 	log.Println("Connected to MQTT")
 
-	publishHADiscoveryConfig()
+	publishHADiscoveryConfig(client)
 
 	listen(client, getTopicPrefix()+"/command/#")
 }
