@@ -448,8 +448,10 @@ func publishHADiscoveryConfig(client mqtt.Client) {
 	// Mute switch with state feedback
 	muteSwitchConfig := SwitchConfig{
 		Name:         hostname + " Mute",
-		CommandTopic: topicPrefix + "/command/mute",
 		StateTopic:   topicPrefix + "/state/mute",
+		CommandTopic: topicPrefix + "/command/mute",
+  		payload_on:   "true",
+  		payload_off:   "false",
 		UniqueID:     hostname + "_mute",
 		Device:       device,
 	}
@@ -472,8 +474,6 @@ func publishHADiscoveryConfig(client mqtt.Client) {
 		StateTopic:  topicPrefix + "/state/power_adapter",
 		UniqueID:    hostname + "_power_adapter",
 		DeviceClass: "plug",
-		PayloadOn:   "true",
-		PayloadOff:  "false",
 		Device:      device,
 	}
 	publishConfig(client, "binary_sensor", hostname+"_power_adapter", powerAdapterConfig)
@@ -481,8 +481,9 @@ func publishHADiscoveryConfig(client mqtt.Client) {
 	// Sleep command switch with status feedback
 	sleepSwitchConfig := SwitchConfig{
 		Name:         hostname + " Sleep",
-		CommandTopic: topicPrefix + "/command/sleep",
 		StateTopic:   topicPrefix + "/state/sleep",
+		CommandTopic: topicPrefix + "/command/sleep",
+  		payload_on:   "sleep",
 		UniqueID:     hostname + "_sleep",
 		Device:       device,
 	}
@@ -491,8 +492,9 @@ func publishHADiscoveryConfig(client mqtt.Client) {
 	// Display sleep command switch with status feedback
 	displaySleepSwitchConfig := SwitchConfig{
 		Name:         hostname + " Display Sleep",
-		CommandTopic: topicPrefix + "/command/displaysleep",
 		StateTopic:   topicPrefix + "/state/displaysleep",
+		CommandTopic: topicPrefix + "/command/displaysleep",
+  		payload_on:   "displaysleep",
 		UniqueID:     hostname + "_display_sleep",
 		Device:       device,
 	}
@@ -501,8 +503,9 @@ func publishHADiscoveryConfig(client mqtt.Client) {
 	// Shutdown command switch with status feedback
 	shutdownSwitchConfig := SwitchConfig{
 		Name:         hostname + " Shutdown",
-		CommandTopic: topicPrefix + "/command/shutdown",
 		StateTopic:   topicPrefix + "/state/shutdown",
+		CommandTopic: topicPrefix + "/command/shutdown",
+  		payload_on:   "shutdown",
 		UniqueID:     hostname + "_shutdown",
 		Device:       device,
 	}
