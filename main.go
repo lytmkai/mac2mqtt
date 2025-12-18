@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"gopkg.in/yaml.v2"
 	"io/ioutil"
@@ -17,6 +18,58 @@ import (
 )
 
 var hostname string
+var model string
+var tokenTimeOut time.Duration = 5 * time.Second
+
+// Home Assistant device information
+type Device struct {
+	Identifiers  []string `json:"identifiers"`
+	Name         string   `json:"name"`
+	Manufacturer string   `json:"manufacturer"`
+	Model        string   `json:"model"`
+}
+
+// Home Assistant MQTT Discovery config for sensors
+type SensorConfig struct {
+	Name              string `json:"name"`
+	StateTopic        string `json:"state_topic"`
+	UniqueID          string `json:"unique_id"`
+	UnitOfMeasurement string `json:"unit_of_measurement,omitempty"`
+	DeviceClass       string `json:"device_class,omitempty"`
+	ValueTemplate     string `json:"value_template,omitempty"`
+	Device            Device `json:"device"`
+}
+
+// Home Assistant MQTT Discovery config for binary sensors
+type BinarySensorConfig struct {
+	Name         string `json:"name"`
+	StateTopic   string `json:"state_topic"`
+	UniqueID     string `json:"unique_id"`
+	DeviceClass  string `json:"device_class,omitempty"`
+	PayloadOn    string `json:"payload_on,omitempty"`
+	PayloadOff   string `json:"payload_off,omitempty"`
+	Device       Device `json:"device"`
+}
+
+// Home Assistant MQTT Discovery config for switches
+type SwitchConfig struct {
+	Name              string `json:"name"`
+	CommandTopic      string `json:"command_topic"`
+	StateTopic        string `json:"state_topic,omitempty"`
+	UniqueID          string `json:"unique_id"`
+	Device            Device `json:"device"`
+}
+
+// Home Assistant MQTT Discovery config for number entities (volume control)
+type NumberConfig struct {
+	Name         string `json:"name"`
+	CommandTopic string `json:"command_topic"`
+	StateTopic   string `json:"state_topic"`
+	UniqueID     string `json:"unique_id"`
+	Min          int    `json:"min"`
+	Max          int    `json:"max"`
+	Device       Device `json:"device"`
+}
 
 type config struct {
 	Ip       string `yaml:"mqtt_ip"`
@@ -122,6 +175,24 @@ func runCommand(name string, arg ...string) {
 	}
 }
 
+// Combined function to get both battery percentage and charging status
+func getBatteryInfo() (percent string, isCharging bool) {
+	output := getCommandOutput("/usr/bin/pmset", "-g", "batt")
+
+	// $ /usr/bin/pmset -g batt
+	// Now drawing from 'Battery Power'
+	//  -InternalBattery-0 (id=4653155)        100%; discharging; 20:00 remaining present: true
+	
+	// Extract battery percentage
+	r := regexp.MustCompile(`(\d+)%`)
+	percent = r.FindStringSubmatch(output)[1]
+	
+	// Check if drawing power from AC Power source
+	isCharging = strings.Contains(output, "AC Power")
+	
+	return percent, isCharging
+}
+
 // from 0 to 100
 func setVolume(i int) {
 	runCommand("/usr/bin/osascript", "-e", "set volume output volume "+strconv.Itoa(i))
@@ -150,7 +221,6 @@ func commandShutdown() {
 		// if the program is run by ordinary user we are trying to shutdown, but it may fail if the other user is logged in
 		runCommand("/usr/bin/osascript", "-e", "tell app \"System Events\" to shut down")
 	}
-
 }
 
 var messagePubHandler mqtt.MessageHandler = func(client mqtt.Client, msg mqtt.Message) {
@@ -160,17 +230,14 @@ var messagePubHandler mqtt.MessageHandler = func(client mqtt.Client, msg mqtt.Me
 var connectHandler mqtt.OnConnectHandler = func(client mqtt.Client) {
 	log.Println("Connected to MQTT")
 
-	token := client.Publish(getTopicPrefix()+"/status/alive", 0, true, "true")
-	token.Wait()
-
-	log.Println("Sending 'true' to topic: " + getTopicPrefix() + "/status/alive")
-
 	listen(client, getTopicPrefix()+"/command/#")
 }
 
 var connectLostHandler mqtt.ConnectionLostHandler = func(client mqtt.Client, err error) {
 	log.Printf("Disconnected from MQTT: %v", err)
 }
+
+var client mqtt.Client
 
 func getMQTTClient(ip, port, user, password string) mqtt.Client {
 
@@ -181,9 +248,7 @@ func getMQTTClient(ip, port, user, password string) mqtt.Client {
 	opts.OnConnect = connectHandler
 	opts.OnConnectionLost = connectLostHandler
 
-	opts.SetWill(getTopicPrefix()+"/status/alive", "false", 0, true)
-
-	client := mqtt.NewClient(opts)
+	client = mqtt.NewClient(opts)
 	if token := client.Connect(); token.Wait() && token.Error() != nil {
 		panic(token.Error())
 	}
@@ -192,7 +257,7 @@ func getMQTTClient(ip, port, user, password string) mqtt.Client {
 }
 
 func getTopicPrefix() string {
-	return "mac2mqtt/" + hostname
+	return "homeassistant/" + hostname
 }
 
 func listen(client mqtt.Client, topic string) {
@@ -233,6 +298,17 @@ func listen(client mqtt.Client, topic string) {
 		if msg.Topic() == getTopicPrefix()+"/command/sleep" {
 
 			if string(msg.Payload()) == "sleep" {
+				// Publish status confirming sleep command was received before executing
+				token := client.Publish(getTopicPrefix()+"/state/sleep", 0, false, "sleep_command_received")
+				if !token.WaitTimeout(tokenTimeOut) {
+					log.Printf("Publish sleep status timed out after %v", tokenTimeOut)
+				} else if token.Error() != nil {
+					log.Printf("Error publishing sleep status: %v", token.Error())
+				}
+				
+				// Give a moment for the message to be sent
+				time.Sleep(1 * time.Second)
+				
 				commandSleep()
 			}
 
@@ -241,6 +317,17 @@ func listen(client mqtt.Client, topic string) {
 		if msg.Topic() == getTopicPrefix()+"/command/displaysleep" {
 
 			if string(msg.Payload()) == "displaysleep" {
+				// Publish status confirming display sleep command was received before executing
+				token := client.Publish(getTopicPrefix()+"/state/displaysleep", 0, false, "displaysleep_command_received")
+				if !token.WaitTimeout(tokenTimeOut) {
+					log.Printf("Publish displaysleep status timed out after %v", tokenTimeOut)
+				} else if token.Error() != nil {
+					log.Printf("Error publishing displaysleep status: %v", token.Error())
+				}
+				
+				// Give a moment for the message to be sent
+				time.Sleep(1 * time.Second)
+				
 				commandDisplaySleep()
 			}
 
@@ -249,6 +336,17 @@ func listen(client mqtt.Client, topic string) {
 		if msg.Topic() == getTopicPrefix()+"/command/shutdown" {
 
 			if string(msg.Payload()) == "shutdown" {
+				// Publish status confirming shutdown command was received before executing
+				token := client.Publish(getTopicPrefix()+"/state/shutdown", 0, false, "shutdown_command_received")
+				if !token.WaitTimeout(tokenTimeOut) {
+					log.Printf("Publish shutdown status timed out after %v", tokenTimeOut)
+				} else if token.Error() != nil {
+					log.Printf("Error publishing shutdown status: %v", token.Error())
+				}
+				
+				// Give a moment for the message to be sent
+				time.Sleep(1 * time.Second)/
+				
 				commandShutdown()
 			}
 
@@ -256,39 +354,154 @@ func listen(client mqtt.Client, topic string) {
 
 	})
 
-	token.Wait()
-	if token.Error() != nil {
+	if !token.WaitTimeout(tokenTimeOut) {
+		log.Printf("Subscribe timed out after %v", tokenTimeOut)
+	} else if token.Error() != nil {
 		log.Printf("Token error: %s\n", token.Error())
 	}
 }
 
 func updateVolume(client mqtt.Client) {
-	token := client.Publish(getTopicPrefix()+"/status/volume", 0, false, strconv.Itoa(getCurrentVolume()))
-	token.Wait()
+	token := client.Publish(getTopicPrefix()+"/state/volume", 0, false, strconv.Itoa(getCurrentVolume()))
+	if !token.WaitTimeout(tokenTimeOut) {
+		log.Printf("Update volume timed out after %v", tokenTimeOut)
+	} else if token.Error() != nil {
+		log.Printf("Error updating volume: %v", token.Error())
+	}
 }
 
 func updateMute(client mqtt.Client) {
-	token := client.Publish(getTopicPrefix()+"/status/mute", 0, false, strconv.FormatBool(getMuteStatus()))
-	token.Wait()
-}
-
-func getBatteryChargePercent() string {
-
-	output := getCommandOutput("/usr/bin/pmset", "-g", "batt")
-
-	// $ /usr/bin/pmset -g batt
-	// Now drawing from 'Battery Power'
-	//  -InternalBattery-0 (id=4653155)        100%; discharging; 20:00 remaining present: true
-
-	r := regexp.MustCompile(`(\d+)%`)
-	percent := r.FindStringSubmatch(output)[1]
-
-	return percent
+	token := client.Publish(getTopicPrefix()+"/state/mute", 0, false, strconv.FormatBool(getMuteStatus()))
+	if !token.WaitTimeout(tokenTimeOut) {
+		log.Printf("Update mute timed out after %v", tokenTimeOut)
+	} else if token.Error() != nil {
+		log.Printf("Error updating mute: %v", token.Error())
+	}
 }
 
 func updateBattery(client mqtt.Client) {
-	token := client.Publish(getTopicPrefix()+"/status/battery", 0, false, getBatteryChargePercent())
-	token.Wait()
+	percent, isCharging := getBatteryInfo()
+	token := client.Publish(getTopicPrefix()+"/state/battery", 0, false, percent)
+	if !token.WaitTimeout(tokenTimeOut) {
+		log.Printf("Update battery timed out after %v", tokenTimeOut)
+	} else if token.Error() != nil {
+		log.Printf("Error updating battery: %v", token.Error())
+	}
+	
+	// Also publish charging status
+	token = client.Publish(getTopicPrefix()+"/state/power_adapter", 0, false, strconv.FormatBool(isCharging))
+	if !token.WaitTimeout(tokenTimeOut) {
+		log.Printf("Update power adapter timed out after %v", tokenTimeOut)
+	} else if token.Error() != nil {
+		log.Printf("Error updating power adapter: %v", token.Error())
+	}
+}
+
+
+func publishHADiscoveryConfig(client mqtt.Client) {
+	topicPrefix := getTopicPrefix()
+	
+	device := Device{
+		Identifiers:  []string{hostname},
+		Name:         hostname,
+		Manufacturer: "Apple",
+		Model:        model,
+	}
+
+	// Volume control (number entity) - includes state feedback
+	volumeNumberConfig := NumberConfig{
+		Name:         hostname + " Volume",
+		CommandTopic: topicPrefix + "/command/volume",
+		StateTopic:   topicPrefix + "/state/volume",
+		UniqueID:     hostname + "_volume",
+		Min:          0,
+		Max:          100,
+		Device:       device,
+	}
+	publishConfig(client, "number", hostname+"_volume", volumeNumberConfig)
+
+	// Mute switch with state feedback
+	muteSwitchConfig := SwitchConfig{
+		Name:         hostname + " Mute",
+		CommandTopic: topicPrefix + "/command/mute",
+		StateTopic:   topicPrefix + "/state/mute",
+		UniqueID:     hostname + "_mute",
+		Device:       device,
+	}
+	publishConfig(client, "switch", hostname+"_mute", muteSwitchConfig)
+
+	// Battery sensor
+	batteryConfig := SensorConfig{
+		Name:              hostname + " Battery Level",
+		StateTopic:        topicPrefix + "/state/battery",
+		UniqueID:          hostname + "_battery",
+		UnitOfMeasurement: "%",
+		DeviceClass:       "battery",
+		Device:            device,
+	}
+	publishConfig(client, "sensor", hostname+"_battery", batteryConfig)
+
+	// Power adapter binary sensor
+	powerAdapterConfig := BinarySensorConfig{
+		Name:        hostname + " Power Adapter",
+		StateTopic:  topicPrefix + "/state/power_adapter",
+		UniqueID:    hostname + "_power_adapter",
+		DeviceClass: "plug",
+		PayloadOn:   "true",
+		PayloadOff:  "false",
+		Device:      device,
+	}
+	publishConfig(client, "binary_sensor", hostname+"_power_adapter", powerAdapterConfig)
+
+	// Sleep command switch with status feedback
+	sleepSwitchConfig := SwitchConfig{
+		Name:         hostname + " Sleep",
+		CommandTopic: topicPrefix + "/command/sleep",
+		StateTopic:   topicPrefix + "/state/sleep",
+		UniqueID:     hostname + "_sleep",
+		Device:       device,
+	}
+	publishConfig(client, "switch", hostname+"_sleep", sleepSwitchConfig)
+
+	// Display sleep command switch with status feedback
+	displaySleepSwitchConfig := SwitchConfig{
+		Name:         hostname + " Display Sleep",
+		CommandTopic: topicPrefix + "/command/displaysleep",
+		StateTopic:   topicPrefix + "/state/displaysleep",
+		UniqueID:     hostname + "_display_sleep",
+		Device:       device,
+	}
+	publishConfig(client, "switch", hostname+"_display_sleep", displaySleepSwitchConfig)
+
+	// Shutdown command switch with status feedback
+	shutdownSwitchConfig := SwitchConfig{
+		Name:         hostname + " Shutdown",
+		CommandTopic: topicPrefix + "/command/shutdown",
+		StateTopic:   topicPrefix + "/state/shutdown",
+		UniqueID:     hostname + "_shutdown",
+		Device:       device,
+	}
+	publishConfig(client, "switch", hostname+"_shutdown", shutdownSwitchConfig)
+
+	
+}
+
+func publishConfig(client mqtt.Client, component string, objectId string, config interface{}) {
+	configTopic := fmt.Sprintf("homeassistant/%s/%s/config", component, objectId)
+	configBytes, err := json.Marshal(config)
+	if err != nil {
+		log.Printf("Error marshaling config: %v", err)
+		return
+	}
+
+	token := client.Publish(configTopic, 0, true, configBytes)
+	if !token.WaitTimeout(tokenTimeOut) {
+		log.Printf("Publish config timed out after %v", tokenTimeOut)
+	} else if token.Error() != nil {
+		log.Printf("Error publishing config: %v", token.Error())
+	} else {
+		log.Printf("Published %s config to %s", component, configTopic)
+	}
 }
 
 func main() {
@@ -300,7 +513,10 @@ func main() {
 
 	var wg sync.WaitGroup
 
-	hostname = getHostname()
+	hostname = "MacBookPRO_M2"
+
+	model = hostname
+
 	mqttClient := getMQTTClient(c.Ip, c.Port, c.User, c.Password)
 
 	volumeTicker := time.NewTicker(2 * time.Second)
@@ -316,6 +532,7 @@ func main() {
 
 			case _ = <-batteryTicker.C:
 				updateBattery(mqttClient)
+				// Power adapter status is now published together with battery info
 			}
 		}
 	}()

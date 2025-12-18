@@ -1,5 +1,9 @@
 # Changelog for mac2mqtt
 
+1.5.0   2025-12-18
+        [Minor]
+        * adapt mqtt message  to home assistant mqtt discovery messages
+
 ```
 1.4.0   2024-03-10
         [Minor]
