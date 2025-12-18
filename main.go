@@ -262,11 +262,13 @@ func getMQTTClient(ip, port, user, password string) mqtt.Client {
 	opts.AddBroker(fmt.Sprintf("tcp://%s:%s", ip, port))
 	opts.SetUsername(user)
 	opts.SetPassword(password)
-	opts.OnConnect = connectHandler
-	opts.OnConnectionLost = connectLostHandler
+	opts.SetClientID("mac2mqtt") 
 	opts.SetAutoReconnect(true)           // Enable auto-reconnect
 	opts.SetConnectRetry(true)            // Enable connect retry
 	opts.SetConnectRetryInterval(5 * time.Second) // Set retry interval
+
+	opts.OnConnect = connectHandler
+	opts.OnConnectionLost = connectLostHandler
 
 	client = mqtt.NewClient(opts)
 	token := client.Connect();
@@ -421,6 +423,8 @@ func publishHADiscoveryConfig(client mqtt.Client) {
 	powerAdapterConfig := BinarySensorConfig{
 		Name:        hostname + " Power Adapter",
 		StateTopic:  topicPrefix + "/state/power_adapter",
+  		PayloadOn:   "true",
+  		PayloadOff:  "false"
 		UniqueID:    hostname + "_power_adapter",
 		DeviceClass: "plug",
 		Device:      device,
