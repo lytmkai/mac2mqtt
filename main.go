@@ -51,11 +51,11 @@ type BinarySensorConfig struct {
 	Device       Device `json:"device"`
 }
 
-// Home Assistant MQTT Discovery config for switches
-type SwitchConfig struct {
+
+type ButtonConfig struct {
 	Name              string `json:"name"`
 	CommandTopic      string `json:"command_topic"`
-	StateTopic        string `json:"state_topic,omitempty"`
+	PayloadPress	  string `json:"payload_press,omitempty"`
 	UniqueID          string `json:"unique_id"`
 	Device            Device `json:"device"`
 }
@@ -289,88 +289,69 @@ func listen(client mqtt.Client, topic string) {
 
 	token := client.Subscribe(topic, 0, func(client mqtt.Client, msg mqtt.Message) {
 
-		if msg.Topic() == getTopicPrefix()+"/command/volume" {
+		topicPrefix := getTopicPrefix()
+
+		topic := string(msg.Topic())
+		commd := string(msg.Payload())
+
+		log.Println("Received command:  [ %s ] [ %s ]", topic, commd)
+
+		if topic == topicPrefix+"/command/volume" {
 
 			i, err := strconv.Atoi(string(msg.Payload()))
 			if err == nil && i >= 0 && i <= 100 {
 
 				setVolume(i)
 
+				time.Sleep(1 * time.Second)
+
 				updateVolume(client)
 				updateMute(client)
 
 			} else {
-				log.Println("Incorrect value")
+				log.Println("Incorrect volume value")
 			}
 
 		}
 
-		if msg.Topic() == getTopicPrefix()+"/command/mute" {
+		else if topic == topicPrefix+"/command/mute" {
 
 			b, err := strconv.ParseBool(string(msg.Payload()))
 			if err == nil {
 				setMute(b)
 
+				time.Sleep(1 * time.Second)
+
 				updateVolume(client)
 				updateMute(client)
 
 			} else {
-				log.Println("Incorrect value")
+				log.Println("Incorrect mute value")
 			}
 
 		}
 
-		if msg.Topic() == getTopicPrefix()+"/command/sleep" {
+		else if topic == topicPrefix+"/command/sleep" {
 
 			if string(msg.Payload()) == "sleep" {
-				// Publish status confirming sleep command was received before executing
-				token := client.Publish(getTopicPrefix()+"/state/sleep", 0, false, "sleep_command_received")
-				if !token.WaitTimeout(tokenTimeOut) {
-					log.Printf("Publish sleep status timed out after %v", tokenTimeOut)
-				} else if token.Error() != nil {
-					log.Printf("Error publishing sleep status: %v", token.Error())
-				}
-				
-				// Give a moment for the message to be sent
-				time.Sleep(1 * time.Second)
 				
 				commandSleep()
 			}
 
 		}
 
-		if msg.Topic() == getTopicPrefix()+"/command/displaysleep" {
+		else if topic == topicPrefix+"/command/displaysleep" {
 
 			if string(msg.Payload()) == "displaysleep" {
-				// Publish status confirming display sleep command was received before executing
-				token := client.Publish(getTopicPrefix()+"/state/displaysleep", 0, false, "displaysleep_command_received")
-				if !token.WaitTimeout(tokenTimeOut) {
-					log.Printf("Publish displaysleep status timed out after %v", tokenTimeOut)
-				} else if token.Error() != nil {
-					log.Printf("Error publishing displaysleep status: %v", token.Error())
-				}
-				
-				// Give a moment for the message to be sent
-				time.Sleep(1 * time.Second)
 				
 				commandDisplaySleep()
 			}
 
 		}
 
-		if msg.Topic() == getTopicPrefix()+"/command/shutdown" {
+		else if topic == topicPrefix+"/command/shutdown" {
 
 			if string(msg.Payload()) == "shutdown" {
-				// Publish status confirming shutdown command was received before executing
-				token := client.Publish(getTopicPrefix()+"/state/shutdown", 0, false, "shutdown_command_received")
-				if !token.WaitTimeout(tokenTimeOut) {
-					log.Printf("Publish shutdown status timed out after %v", tokenTimeOut)
-				} else if token.Error() != nil {
-					log.Printf("Error publishing shutdown status: %v", token.Error())
-				}
-				
-				// Give a moment for the message to be sent
-				time.Sleep(1 * time.Second)
 				
 				commandShutdown()
 			}
@@ -433,30 +414,6 @@ func publishHADiscoveryConfig(client mqtt.Client) {
 		Model:        model,
 	}
 
-	// Volume control (number entity) - includes state feedback
-	volumeNumberConfig := NumberConfig{
-		Name:         hostname + " Volume",
-		CommandTopic: topicPrefix + "/command/volume",
-		StateTopic:   topicPrefix + "/state/volume",
-		UniqueID:     hostname + "_volume",
-		Min:          0,
-		Max:          100,
-		Device:       device,
-	}
-	publishConfig(client, "number", hostname+"_volume", volumeNumberConfig)
-
-	// Mute switch with state feedback
-	muteSwitchConfig := SwitchConfig{
-		Name:         hostname + " Mute",
-		StateTopic:   topicPrefix + "/state/mute",
-		CommandTopic: topicPrefix + "/command/mute",
-  		payload_on:   "true",
-  		payload_off:   "false",
-		UniqueID:     hostname + "_mute",
-		Device:       device,
-	}
-	publishConfig(client, "switch", hostname+"_mute", muteSwitchConfig)
-
 	// Battery sensor
 	batteryConfig := SensorConfig{
 		Name:              hostname + " Battery Level",
@@ -478,38 +435,58 @@ func publishHADiscoveryConfig(client mqtt.Client) {
 	}
 	publishConfig(client, "binary_sensor", hostname+"_power_adapter", powerAdapterConfig)
 
-	// Sleep command switch with status feedback
-	sleepSwitchConfig := SwitchConfig{
+	// Volume control (number entity) - includes state feedback
+	volumeNumberConfig := NumberConfig{
+		Name:         hostname + " Volume",
+		CommandTopic: topicPrefix + "/command/volume",
+		StateTopic:   topicPrefix + "/state/volume",
+		UniqueID:     hostname + "_volume",
+		Min:          0,
+		Max:          100,
+		Device:       device,
+	}
+	publishConfig(client, "number", hostname+"_volume", volumeNumberConfig)
+
+	// Mute Button with state feedback
+	muteButtonConfig := ButtonConfig{
+		Name:         hostname + " Mute",
+		CommandTopic: topicPrefix + "/command/mute",
+		PayloadPress: "true",
+		UniqueID:     hostname + "_mute",
+		Device:       device,
+	}
+	publishConfig(client, "button", hostname+"_mute", muteButtonConfig)
+
+	// Sleep command Button with state feedback
+	sleepButtonConfig := ButtonConfig{
 		Name:         hostname + " Sleep",
 		StateTopic:   topicPrefix + "/state/sleep",
 		CommandTopic: topicPrefix + "/command/sleep",
-  		payload_on:   "sleep",
+  		PayloadPress: "sleep",
 		UniqueID:     hostname + "_sleep",
 		Device:       device,
 	}
-	publishConfig(client, "switch", hostname+"_sleep", sleepSwitchConfig)
+	publishConfig(client, "button", hostname+"_sleep", sleepButtonConfig)
 
-	// Display sleep command switch with status feedback
-	displaySleepSwitchConfig := SwitchConfig{
+	// Display sleep command Button with state feedback
+	displaySleepButtonConfig := ButtonConfig{
 		Name:         hostname + " Display Sleep",
-		StateTopic:   topicPrefix + "/state/displaysleep",
 		CommandTopic: topicPrefix + "/command/displaysleep",
-  		payload_on:   "displaysleep",
+  		PayloadPress: "displaysleep",
 		UniqueID:     hostname + "_display_sleep",
 		Device:       device,
 	}
-	publishConfig(client, "switch", hostname+"_display_sleep", displaySleepSwitchConfig)
+	publishConfig(client, "button", hostname+"_display_sleep", displaySleepButtonConfig)
 
-	// Shutdown command switch with status feedback
-	shutdownSwitchConfig := SwitchConfig{
+	// Shutdown command Button with state feedback
+	shutdownButtonConfig := ButtonConfig{
 		Name:         hostname + " Shutdown",
-		StateTopic:   topicPrefix + "/state/shutdown",
 		CommandTopic: topicPrefix + "/command/shutdown",
-  		payload_on:   "shutdown",
+  		PayloadPress: "shutdown",
 		UniqueID:     hostname + "_shutdown",
 		Device:       device,
 	}
-	publishConfig(client, "switch", hostname+"_shutdown", shutdownSwitchConfig)
+	publishConfig(client, "button", hostname+"_shutdown", shutdownButtonConfig)
 
 	
 }
