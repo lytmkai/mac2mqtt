@@ -296,7 +296,7 @@ func listen(client mqtt.Client, topic string) {
 		topic := string(msg.Topic())
 		commd := string(msg.Payload())
 
-		log.Println("Received command:  [ %s ] [ %s ]", topic, commd)
+		log.Printf("Received command:  [ %s ] [ %s ]", topic, commd)
 
 		if topic == topicPrefix+"/command/volume" {
 
