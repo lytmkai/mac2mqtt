@@ -51,7 +51,6 @@ type BinarySensorConfig struct {
 	Device       Device `json:"device"`
 }
 
-
 type ButtonConfig struct {
 	Name              string `json:"name"`
 	CommandTopic      string `json:"command_topic"`
@@ -62,13 +61,25 @@ type ButtonConfig struct {
 
 // Home Assistant MQTT Discovery config for number entities (volume control)
 type NumberConfig struct {
-	Name         string `json:"name"`
-	CommandTopic string `json:"command_topic"`
-	StateTopic   string `json:"state_topic"`
-	UniqueID     string `json:"unique_id"`
-	Min          int    `json:"min"`
-	Max          int    `json:"max"`
-	Device       Device `json:"device"`
+	Name         string  `json:"name"`
+	CommandTopic string  `json:"command_topic"`
+	StateTopic   string  `json:"state_topic"`
+	UniqueID     string  `json:"unique_id"`
+	Min          float32 `json:"min,omitempty"` // 改为 float32 以支持 0.0
+	Max          float32 `json:"max,omitempty"` // 改为 float32 以支持 1.0
+	Step         float32 `json:"step,omitempty"`
+	Device       Device  `json:"device"`
+}
+
+// Home Assistant MQTT Discovery config for light entities
+type LightConfig struct {
+	Name         string  `json:"name"`
+	CommandTopic string  `json:"command_topic"`
+	StateTopic   string  `json:"state_topic"`
+	UniqueID     string  `json:"unique_id"`
+	Device       Device  `json:"device"`
+	BrightnessStateTopic string `json:"brightness_state_topic,omitempty"`
+	BrightnessCommandTopic string `json:"brightness_command_topic,omitempty"`
 }
 
 type config struct {
@@ -76,6 +87,7 @@ type config struct {
 	Port     string `yaml:"mqtt_port"`
 	User     string `yaml:"mqtt_user"`
 	Password string `yaml:"mqtt_password"`
+	BrightnessBinaryPath string `yaml:"brightness_binary_path"` // 新增亮度控制路径配置
 }
 
 func (c *config) getConfig() *config {
@@ -104,6 +116,11 @@ func (c *config) getConfig() *config {
 
 	if c.Password == "" {
 		log.Fatal("Must specify mqtt_password in mac2mqtt.yaml")
+	}
+
+	// 检查亮度控制路径是否存在
+	if c.BrightnessBinaryPath == "" {
+		log.Fatal("Must specify brightness_binary_path in mac2mqtt.yaml")
 	}
 
 	return c
@@ -164,6 +181,39 @@ func getCurrentVolume() int {
 	}
 
 	return i
+}
+
+// 获取当前亮度值
+func getCurrentBrightness(config *config) float32 {
+	output := getCommandOutput(config.BrightnessBinaryPath, "-lv")
+
+	// 解析输出，查找亮度值
+	re := regexp.MustCompile(`brightness\s+(\d+\.\d+)`)
+	matches := re.FindStringSubmatch(output)
+	
+	if len(matches) < 2 {
+		log.Printf("无法从亮度命令输出中提取亮度值: %s", output)
+		return 0.0
+	}
+	
+	brightnessStr := matches[1]
+	brightness, err := strconv.ParseFloat(brightnessStr, 32)
+	if err != nil {
+		log.Printf("解析亮度值失败: %s, 错误: %v", brightnessStr, err)
+		return 0.0
+	}
+
+	return float32(brightness)
+}
+
+// 设置亮度值 (0.0 到 1.0)
+func setBrightness(config *config, brightness float32) {
+	// 格式化浮点数，保留两位小数，防止出现 0.3333333 这种长串
+	brightnessStr := strconv.FormatFloat(float64(brightness), 'f', 2, 32)
+	
+	// 使用二进制工具设置亮度
+	runCommand(config.BrightnessBinaryPath, brightnessStr)
+	log.Printf("执行亮度设置命令: %s", brightnessStr)
 }
 
 func runCommand(name string, arg ...string) {
@@ -255,6 +305,7 @@ var connectLostHandler mqtt.ConnectionLostHandler = func(client mqtt.Client, err
 }
 
 var client mqtt.Client
+var globalConfig *config // 全局配置变量
 
 func getMQTTClient(ip, port, user, password string) mqtt.Client {
 
@@ -350,6 +401,33 @@ func listen(client mqtt.Client, topic string) {
 				commandShutdown()
 			}
 
+		} else if topic == topicPrefix+"/command/brightness" { // 处理亮度命令
+			// 1. 接收 MQTT 发来的字符串（假设是 "50"）
+			rawValue := string(msg.Payload())
+			
+			// 2. 转换为整数
+			intValue, err := strconv.Atoi(rawValue)
+			if err != nil {
+				log.Println("亮度值格式错误，无法转换为数字:", rawValue)
+				return
+			}
+
+			// 3. 边界检查 (0-100)
+			if intValue < 0 {
+				intValue = 0
+			} else if intValue > 100 {
+				intValue = 100
+			}
+
+			// 4. 关键转换：将 0-100 的整数映射为 0.0-1.0 的浮点数
+			floatVal := float32(intValue) / 100.0
+
+			// 5. 调用设置函数
+			setBrightness(globalConfig, floatVal)
+			
+			// 6. 立即反馈状态（可选，防止轮询延迟）
+			time.Sleep(500 * time.Millisecond)
+			updateBrightness(client)
 		}
 
 	})
@@ -357,7 +435,7 @@ func listen(client mqtt.Client, topic string) {
 	if !token.WaitTimeout(tokenTimeOut) {
 		log.Printf("Subscribe timed out after %v", tokenTimeOut)
 	} else if token.Error() != nil {
-		log.Printf("Token error: %s\n", token.Error())
+		log.Printf("Token error: %v", token.Error())
 	}
 }
 
@@ -376,6 +454,21 @@ func updateMute(client mqtt.Client) {
 		log.Printf("Update mute timed out after %v", tokenTimeOut)
 	} else if token.Error() != nil {
 		log.Printf("Error updating mute: %v", token.Error())
+	}
+}
+
+// 更新亮度状态
+func updateBrightness(client mqtt.Client) {
+	brightness := getCurrentBrightness(globalConfig)
+	
+	// 将浮点亮度值转换为 0-100 的整数用于 MQTT 上报（与 HA 配置保持一致）
+	brightnessInt := int(brightness * 100)
+	
+	token := client.Publish(getTopicPrefix()+"/state/brightness", 0, false, strconv.Itoa(brightnessInt))
+	if !token.WaitTimeout(tokenTimeOut) {
+		log.Printf("Update brightness timed out after %v", tokenTimeOut)
+	} else if token.Error() != nil {
+		log.Printf("Error updating brightness: %v", token.Error())
 	}
 }
 
@@ -442,6 +535,18 @@ func publishHADiscoveryConfig(client mqtt.Client) {
 		Device:       device,
 	}
 	publishConfig(client, "number", hostname+"_volume", volumeNumberConfig)
+
+	// Brightness control (number entity) - includes state feedback
+	brightnessNumberConfig := NumberConfig{
+		Name:         hostname + " Brightness",
+		CommandTopic: topicPrefix + "/command/brightness",
+		StateTopic:   topicPrefix + "/state/brightness",
+		UniqueID:     hostname + "_brightness",
+		Min:          0,
+		Max:          100,
+		Device:       device,
+	}
+	publishConfig(client, "number", hostname+"_brightness", brightnessNumberConfig)
 
 	// Mute Button with state feedback
 	muteButtonConfig := ButtonConfig{
@@ -517,6 +622,8 @@ func main() {
 
 	model = hostname
 
+	globalConfig = &c // 设置全局配置变量
+
 	mqttClient := getMQTTClient(c.Ip, c.Port, c.User, c.Password)
 
 	volumeTicker := time.NewTicker(2 * time.Second)
@@ -529,6 +636,8 @@ func main() {
 			case _ = <-volumeTicker.C:
 				updateVolume(mqttClient)
 				updateMute(mqttClient)
+				updateBrightness(mqttClient)
+
 
 			case _ = <-batteryTicker.C:
 				updateBattery(mqttClient)
